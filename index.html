@@ -323,23 +323,6 @@
   }
 
   /* Setup panel */
-  .steps{padding-left:0;list-style:none;margin:0;}
-  .steps li{
-    display:flex; gap:10px;
-    font-size:13px;
-    color:#c7cae0;
-    line-height:1.5;
-    margin-bottom:10px;
-  }
-  .steps li .n{
-    flex:none;
-    width:20px;height:20px;
-    border-radius:50%;
-    background:var(--indigo-2);
-    color:#fff;
-    font-size:11px;
-    display:flex;align-items:center;justify-content:center;
-  }
   .toast{
     position:fixed; bottom:96px; left:50%;
     -webkit-transform:translateX(-50%) translateZ(0);
@@ -365,7 +348,7 @@
 <nav class="tabs">
   <button class="tab-btn active" data-tab="home">Today</button>
   <button class="tab-btn" data-tab="history">History</button>
-  <button class="tab-btn" data-tab="setup">9pm Alert</button>
+  <button class="tab-btn" data-tab="ask">Ask</button>
 </nav>
 
 <div class="wrap">
@@ -411,38 +394,23 @@
     </section>
   </div>
 
-  <!-- SETUP -->
-  <div id="tab-setup" style="display:none;">
-    <section class="panel">
-      <h2>Why there's no auto-notification</h2>
-      <p style="font-size:12.5px;line-height:1.6;color:#c7cae0;">
-        iPhone doesn't let a plain website schedule its own notification for a fixed time every day —
-        that only works for real apps, or for a website with a paid server constantly pushing at 9pm.
-        Instead, use the free Shortcuts app already on your phone. It's more reliable than anything
-        JavaScript could fake, and takes under a minute to set up.
-      </p>
-    </section>
 
-    <section class="panel">
-      <h2>Set up the 9pm reminder</h2>
-      <ul class="steps">
-        <li><span class="n">1</span>Open the <b>Shortcuts</b> app on your iPhone.</li>
-        <li><span class="n">2</span>Tap <b>Automation</b> at the bottom, then <b>+</b> in the top right.</li>
-        <li><span class="n">3</span>Choose <b>Time of Day</b>, set it to <b>9:00 PM</b>, repeat <b>Daily</b>, then tap Next.</li>
-        <li><span class="n">4</span>Tap <b>Add Action</b>, search "<b>Show Notification</b>", add it, and type: <i>"Log today's Apple Pay spending"</i>.</li>
-        <li><span class="n">5</span>Add a second action: search "<b>Open App</b>" (or "Open URL") so tapping the notification jumps straight into Safari — open this Ledger page once first, then add it to your <b>Home Screen</b> (Share → Add to Home Screen) so it opens like an app.</li>
-        <li><span class="n">6</span>Turn <b>off</b> "Ask Before Running" so it fires silently every night.</li>
-      </ul>
-    </section>
-
-    <section class="panel">
-      <h2>Add Ledger to your Home Screen</h2>
-      <p style="font-size:12.5px;line-height:1.6;color:#c7cae0;">
-        In Safari, tap the <b>Share</b> icon → <b>Add to Home Screen</b>. It'll sit on your phone
-        like a real app and open full-screen, no browser bar. Your data is saved on this device
-        only (nothing sent anywhere) — so use the same phone/browser each time.
-      </p>
-    </section>
+  <!-- ASK -->
+  <div id="tab-ask" style="display:none;">
+    <div id="chat-log" class="chat-log">
+      <div class="msg bot">Ask me about your spending, or tell me about a refund.<br><br>Try:<br>• how much on groceries this week<br>• what did I spend on transport in august<br>• biggest purchase this week<br>• refund Sweetgreen<br>• Sweetgreen is food</div>
+    </div>
+    <div class="chat-suggest" id="chat-suggest">
+      <button data-q="how much did I spend today">today</button>
+      <button data-q="how much on food this week">food this week</button>
+      <button data-q="how much on transport this week">transport</button>
+      <button data-q="biggest purchase this week">biggest</button>
+      <button data-q="where am I spending most this month">top categories</button>
+    </div>
+    <div class="chat-bar">
+      <input type="text" id="chat-input" placeholder="Ask about your spending…" autocomplete="off">
+      <button id="chat-send">Ask</button>
+    </div>
   </div>
 
 </div>
@@ -504,7 +472,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
-    ['home','history','setup'].forEach(t=>{
+    ['home','history','ask'].forEach(t=>{
       document.getElementById('tab-'+t).style.display = (t===btn.dataset.tab)?'block':'none';
     });
   });
@@ -514,7 +482,8 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
 let chartInstance = null;
 
 function render(){
-  const txns = loadTxns();
+  const allTxns = loadTxns();
+  const txns = allTxns.filter(t=>!t.refunded);
   const today = todayStr();
 
   // today total
@@ -591,25 +560,32 @@ function render(){
 
   // history list
   const histEl = document.getElementById('history-list');
-  if(txns.length===0){
+  if(allTxns.length===0){
     histEl.innerHTML = '<div class="empty">Nothing logged yet. Tap "Add receipt" to scan your first Apple Pay screenshot.</div>';
   } else {
     const byDate = {};
-    txns.forEach(t=>{ (byDate[t.date] = byDate[t.date]||[]).push(t); });
+    allTxns.forEach(t=>{ (byDate[t.date] = byDate[t.date]||[]).push(t); });
     const sortedDates = Object.keys(byDate).sort().reverse();
     histEl.innerHTML = sortedDates.map(date=>{
       const rows = byDate[date].map(t=>`
-        <div class="txn-row" data-id="${t.id}">
-          <span class="txn-name">${escapeHtml(t.merchant)}<span class="txn-cat">${t.category}</span></span>
+        <div class="txn-row${t.refunded?' refunded':''}" data-id="${t.id}">
+          <span class="txn-name">${escapeHtml(t.merchant)}<span class="txn-cat">${t.category}${t.refunded?' · refunded':''}</span></span>
           <span class="txn-amt">$${fmt(t.amount)}</span>
-          <button class="txn-del" data-id="${t.id}">×</button>
+          <button class="txn-${t.refunded?'undo':'del'}" data-id="${t.id}">${t.refunded?'↺':'×'}</button>
         </div>`).join('');
-      const dayTotal = byDate[date].reduce((s,t)=>s+t.amount,0);
+      const dayTotal = byDate[date].filter(t=>!t.refunded).reduce((s,t)=>s+t.amount,0);
       return `<div class="txn-day">
         <div class="date">${dayLabel(date)} — $${fmt(dayTotal)}</div>
         ${rows}
       </div>`;
     }).join('');
+    histEl.querySelectorAll('.txn-undo').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const t2 = loadTxns();
+        const i = t2.findIndex(x=>x.id===btn.dataset.id);
+        if(i>-1){ delete t2[i].refunded; saveTxns(t2); render(); showToast('Refund undone'); }
+      });
+    });
     histEl.querySelectorAll('.txn-del').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         const id = btn.dataset.id;
@@ -852,6 +828,260 @@ function showToast(msg){
   t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'), 1800);
 }
+
+
+// ============ ASK: local query engine ============
+
+const CAT_WORDS = {
+  'Food':['food','groceries','grocery','eat','eating','dining','restaurant','restaurants','coffee','lunch','dinner','breakfast','takeout','delivery','snacks','drinks','bar','bars'],
+  'Transport':['transport','transportation','transit','travel','uber','lyft','taxi','cab','subway','train','gas','commute','commuting','rides'],
+  'Shopping':['shopping','shop','clothes','clothing','retail','stuff','goods','amazon'],
+  'Bills':['bills','bill','utilities','utility','rent','insurance','subscription','subscriptions'],
+  'Entertainment':['entertainment','fun','movies','movie','going out','nightlife','games','gaming','tickets'],
+  'Other':['other','misc','miscellaneous']
+};
+
+function startOfWeek(d){
+  const x = new Date(d);
+  const day = x.getDay();            // 0 = Sunday
+  const diff = (day === 0 ? 6 : day - 1); // week starts Monday
+  x.setDate(x.getDate() - diff);
+  return x;
+}
+
+// Returns {from, to, label} as ISO date strings, inclusive
+function parseTimeframe(q){
+  const now = new Date();
+  const t = todayStr();
+
+  if(/\b(today)\b/.test(q))        return {from:t, to:t, label:'today'};
+  if(/\b(yesterday)\b/.test(q))    return {from:offsetDate(1), to:offsetDate(1), label:'yesterday'};
+
+  if(/\blast (\d+) days?\b/.test(q)){
+    const n = parseInt(q.match(/\blast (\d+) days?\b/)[1],10);
+    return {from:offsetDate(n-1), to:t, label:`the last ${n} days`};
+  }
+  if(/\b(this week)\b/.test(q)){
+    return {from:toLocalISO(startOfWeek(now)), to:t, label:'this week'};
+  }
+  if(/\b(last week)\b/.test(q)){
+    const s = startOfWeek(now); s.setDate(s.getDate()-7);
+    const e = new Date(s); e.setDate(e.getDate()+6);
+    return {from:toLocalISO(s), to:toLocalISO(e), label:'last week'};
+  }
+  if(/\b(this month)\b/.test(q)){
+    return {from:toLocalISO(new Date(now.getFullYear(), now.getMonth(), 1)), to:t, label:'this month'};
+  }
+  if(/\b(last month)\b/.test(q)){
+    const s = new Date(now.getFullYear(), now.getMonth()-1, 1);
+    const e = new Date(now.getFullYear(), now.getMonth(), 0);
+    return {from:toLocalISO(s), to:toLocalISO(e), label:'last month'};
+  }
+  if(/\b(this year)\b/.test(q)){
+    return {from:toLocalISO(new Date(now.getFullYear(),0,1)), to:t, label:'this year'};
+  }
+  if(/\b(all time|ever|total|overall)\b/.test(q)){
+    return {from:'0000-01-01', to:t, label:'all time'};
+  }
+
+  // named month: "in august", "for july"
+  for(const [name, idx] of Object.entries(MONTHS)){
+    if(name.length < 3) continue;
+    const re = new RegExp('\\b'+name+'[a-z]*\\b');
+    if(re.test(q)){
+      let year = now.getFullYear();
+      const ym = q.match(/\b(20\d{2})\b/);
+      if(ym) year = parseInt(ym[1],10);
+      else if(idx > now.getMonth()) year -= 1;   // future month = last year
+      const s = new Date(year, idx, 1);
+      const e = new Date(year, idx+1, 0);
+      const label = s.toLocaleDateString('en-US',{month:'long', year: ym ? 'numeric' : undefined});
+      return {from:toLocalISO(s), to:toLocalISO(e), label};
+    }
+  }
+
+  return {from:'0000-01-01', to:t, label:'all time', isDefault:true};
+}
+
+function parseCategory(q){
+  for(const [cat, words] of Object.entries(CAT_WORDS)){
+    for(const w of words){
+      if(new RegExp('\\b'+w.replace(/ /g,'\\s+')+'\\b').test(q)) return cat;
+    }
+  }
+  return null;
+}
+
+function inRange(t, r){ return t.date >= r.from && t.date <= r.to; }
+function activeTxns(){ return loadTxns().filter(t=>!t.refunded); }
+
+function money(n){ return '$'+fmt(n); }
+
+// ---------- main dispatcher ----------
+function answerQuery(raw){
+  const q = raw.toLowerCase().trim();
+  const all = loadTxns();
+
+  if(all.length === 0){
+    return "Nothing logged yet. Add a receipt first and then ask me anything about it.";
+  }
+
+  // ===== 1. Mark a refund =====
+  let m = q.match(/^(?:mark\s+)?(?:the\s+)?(.+?)\s+(?:was\s+|is\s+|got\s+)?refunded$/)
+       || q.match(/^refund(?:ed)?\s+(.+)$/);
+  if(m){
+    const target = m[1].trim().replace(/^(the|my|a)\s+/,'');
+    const matches = all
+      .filter(t=>!t.refunded && t.merchant.toLowerCase().includes(target))
+      .sort((a,b)=> b.date.localeCompare(a.date));
+    if(matches.length === 0){
+      return `I couldn't find an unrefunded charge matching "${escapeHtml(target)}". Check the History tab for the exact merchant name.`;
+    }
+    const hit = matches[0];
+    const txns = loadTxns();
+    const idx = txns.findIndex(t=>t.id===hit.id);
+    txns[idx].refunded = true;
+    saveTxns(txns);
+    render();
+    let note = `Marked <b>${escapeHtml(hit.merchant)}</b> — ${money(hit.amount)} on ${dayLabel(hit.date)} as refunded. It's excluded from your totals now.`;
+    if(matches.length > 1){
+      note += `<br><br>Note: ${matches.length} charges matched "${escapeHtml(target)}" — I took the most recent. Undo from the History tab if that was the wrong one.`;
+    }
+    return note;
+  }
+
+  // ===== 2. Recategorize =====
+  m = q.match(/^(.+?)\s+(?:is|are|goes? (?:in|under|to)|should be)\s+(.+)$/);
+  if(m){
+    const target = m[1].trim();
+    const catGuess = parseCategory(m[2].trim());
+    if(catGuess){
+      const txns = loadTxns();
+      let n = 0;
+      txns.forEach(t=>{
+        if(t.merchant.toLowerCase().includes(target)){ t.category = catGuess; n++; }
+      });
+      if(n > 0){
+        saveTxns(txns); render();
+        return `Recategorized ${n} ${n===1?'charge':'charges'} from <b>${escapeHtml(target)}</b> to ${catGuess}.`;
+      }
+      return `No charges found matching "${escapeHtml(target)}".`;
+    }
+  }
+
+  const range = parseTimeframe(q);
+  const cat = parseCategory(q);
+
+  // ===== 3. Biggest / most expensive =====
+  if(/\b(biggest|largest|most expensive|priciest|highest)\b/.test(q)){
+    let pool = activeTxns().filter(t=>inRange(t,range));
+    if(cat) pool = pool.filter(t=>t.category===cat);
+    if(pool.length===0) return `Nothing logged ${range.label}${cat?' for '+cat:''}.`;
+    const top = pool.sort((a,b)=>b.amount-a.amount)[0];
+    return `Biggest ${cat?cat.toLowerCase()+' ':''}charge ${range.label}:<span class="big">${money(top.amount)}</span>${escapeHtml(top.merchant)} — ${dayLabel(top.date)}`;
+  }
+
+  // ===== 4. Top categories / where is money going =====
+  if(/\b(top categor|breakdown|where.*(spend|going|money)|what.*most|categor)/.test(q) && !cat){
+    const pool = activeTxns().filter(t=>inRange(t,range));
+    if(pool.length===0) return `Nothing logged ${range.label}.`;
+    const by = {};
+    pool.forEach(t=>{ by[t.category]=(by[t.category]||0)+t.amount; });
+    const sorted = Object.entries(by).sort((a,b)=>b[1]-a[1]);
+    const total = sorted.reduce((s,x)=>s+x[1],0);
+    const lines = sorted.map(([c,v])=>
+      `<div class="lineitem"><span>${c}</span><span>${money(v)} · ${Math.round(v/total*100)}%</span></div>`).join('');
+    return `Spending ${range.label} — ${money(total)} total:<br><br>${lines}`;
+  }
+
+  // ===== 5. How many / count =====
+  if(/\bhow many\b/.test(q)){
+    let pool = activeTxns().filter(t=>inRange(t,range));
+    if(cat) pool = pool.filter(t=>t.category===cat);
+    return `${pool.length} ${pool.length===1?'charge':'charges'} ${range.label}${cat?' on '+cat.toLowerCase():''}, totalling ${money(pool.reduce((s,t)=>s+t.amount,0))}.`;
+  }
+
+  // ===== 6. Average =====
+  if(/\b(average|avg|per day|daily)\b/.test(q)){
+    let pool = activeTxns().filter(t=>inRange(t,range));
+    if(cat) pool = pool.filter(t=>t.category===cat);
+    if(pool.length===0) return `Nothing logged ${range.label}.`;
+    const total = pool.reduce((s,t)=>s+t.amount,0);
+    const days = Math.max(1, Math.round((new Date(range.to) - new Date(range.from))/86400000) + 1);
+    return `${range.label.charAt(0).toUpperCase()+range.label.slice(1)}${cat?' on '+cat.toLowerCase():''}:<span class="big">${money(total/days)}/day</span>${money(total)} across ${days} days.`;
+  }
+
+  // ===== 7. List transactions =====
+  if(/\b(list|show|what did i buy|which|breakdown of)\b/.test(q)){
+    let pool = activeTxns().filter(t=>inRange(t,range));
+    if(cat) pool = pool.filter(t=>t.category===cat);
+    if(pool.length===0) return `Nothing logged ${range.label}${cat?' on '+cat.toLowerCase():''}.`;
+    pool.sort((a,b)=>b.date.localeCompare(a.date) || b.amount-a.amount);
+    const shown = pool.slice(0,12);
+    const lines = shown.map(t=>
+      `<div class="lineitem"><span>${escapeHtml(t.merchant)}</span><span>${money(t.amount)}</span></div>`).join('');
+    const more = pool.length>12 ? `<br>…and ${pool.length-12} more.` : '';
+    return `${cat?cat+' ':''}${range.label} — ${money(pool.reduce((s,t)=>s+t.amount,0))}:<br><br>${lines}${more}`;
+  }
+
+  // ===== 8. Merchant-specific total ("how much at sweetgreen") =====
+  const merchMatch = q.match(/\b(?:at|on|to|from)\s+([a-z0-9'&\. ]{3,30})$/);
+  if(merchMatch && !cat){
+    const name = merchMatch[1].trim();
+    const pool = activeTxns().filter(t=>inRange(t,range) && t.merchant.toLowerCase().includes(name));
+    if(pool.length>0){
+      const total = pool.reduce((s,t)=>s+t.amount,0);
+      return `${escapeHtml(name)} ${range.label}:<span class="big">${money(total)}</span>${pool.length} ${pool.length===1?'charge':'charges'}.`;
+    }
+  }
+
+  // ===== 9. Default: total spend =====
+  let pool = activeTxns().filter(t=>inRange(t,range));
+  if(cat) pool = pool.filter(t=>t.category===cat);
+  const total = pool.reduce((s,t)=>s+t.amount,0);
+
+  if(pool.length===0){
+    return `Nothing logged ${range.label}${cat?' on '+cat.toLowerCase():''}.`;
+  }
+
+  const head = cat ? `${cat} ${range.label}` : `Total ${range.label}`;
+  let extra = `${pool.length} ${pool.length===1?'charge':'charges'}`;
+  if(pool.length > 1){
+    const top = [...pool].sort((a,b)=>b.amount-a.amount)[0];
+    extra += ` · biggest was ${escapeHtml(top.merchant)} at ${money(top.amount)}`;
+  }
+  return `${head}:<span class="big">${money(total)}</span>${extra}`;
+}
+
+// ---------- chat UI wiring ----------
+const chatLog = document.getElementById('chat-log');
+const chatInput = document.getElementById('chat-input');
+
+function pushMsg(html, who){
+  const d = document.createElement('div');
+  d.className = 'msg ' + who;
+  d.innerHTML = html;
+  chatLog.appendChild(d);
+  chatLog.scrollTop = chatLog.scrollHeight;
+}
+
+function submitQuery(text){
+  if(!text.trim()) return;
+  pushMsg(escapeHtml(text), 'me');
+  chatInput.value = '';
+  setTimeout(()=>{
+    let reply;
+    try{ reply = answerQuery(text); }
+    catch(e){ reply = "I couldn't parse that one. Try phrasing it like \"how much on food this week\"."; console.error(e); }
+    pushMsg(reply, 'bot');
+  }, 90);
+}
+
+document.getElementById('chat-send').addEventListener('click', ()=>submitQuery(chatInput.value));
+chatInput.addEventListener('keydown', e=>{ if(e.key==='Enter') submitQuery(chatInput.value); });
+document.querySelectorAll('#chat-suggest button').forEach(b=>{
+  b.addEventListener('click', ()=>submitQuery(b.dataset.q));
+});
 
 render();
 </script>
