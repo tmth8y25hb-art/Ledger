@@ -323,6 +323,78 @@
   }
 
   /* Setup panel */
+
+  /* Analytics */
+  .period-switch{
+    display:flex;
+    gap:2px;
+    margin-bottom:12px;
+    background:var(--ink-2);
+    border-radius:5px;
+    padding:3px;
+  }
+  .ps-btn{
+    flex:1;
+    background:none;
+    border:none;
+    color:#8b8fa8;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:12px;
+    padding:9px;
+    border-radius:4px;
+    cursor:pointer;
+  }
+  .ps-btn.active{ background:var(--indigo); color:#fff; }
+  .period-nav{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-bottom:14px;
+    gap:10px;
+  }
+  .period-nav button{
+    background:var(--ink-2);
+    border:1px solid #343951;
+    color:var(--paper);
+    font-size:19px;
+    line-height:1;
+    width:40px;
+    height:38px;
+    border-radius:6px;
+    cursor:pointer;
+  }
+  .period-nav button:disabled{ opacity:0.3; cursor:default; }
+  .period-label{
+    flex:1;
+    text-align:center;
+    font-family:'Fraunces',serif;
+    font-size:17px;
+    font-weight:600;
+  }
+  .stats-receipt{ margin-bottom:16px; }
+  .rank-row{
+    display:flex;
+    justify-content:space-between;
+    gap:10px;
+    padding:8px 0;
+    border-bottom:1px dashed #333752;
+    font-size:13px;
+  }
+  .rank-row:last-child{ border-bottom:none; }
+  .rank-row .r-name{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#d7dae8; }
+  .rank-row .r-sub{ font-size:10.5px; color:#7f84a0; display:block; }
+  .yoy-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:9px 0;
+    border-bottom:1px dashed #333752;
+    font-size:13px;
+  }
+  .yoy-row:last-child{ border-bottom:none; }
+  .yoy-delta{ font-size:11.5px; }
+  .up{ color:#c96a52; }
+  .down{ color:#6f9b7c; }
   .toast{
     position:fixed; bottom:96px; left:50%;
     -webkit-transform:translateX(-50%) translateZ(0);
@@ -348,6 +420,7 @@
 <nav class="tabs">
   <button class="tab-btn active" data-tab="home">Today</button>
   <button class="tab-btn" data-tab="history">History</button>
+  <button class="tab-btn" data-tab="stats">Analytics</button>
   <button class="tab-btn" data-tab="ask">Ask</button>
 </nav>
 
@@ -394,6 +467,60 @@
     </section>
   </div>
 
+
+  <!-- ANALYTICS -->
+  <div id="tab-stats" style="display:none;">
+    <div class="period-switch">
+      <button class="ps-btn active" data-mode="month">Month</button>
+      <button class="ps-btn" data-mode="year">Year</button>
+    </div>
+
+    <div class="period-nav">
+      <button id="per-prev" aria-label="Previous period">‹</button>
+      <div class="period-label" id="per-label">—</div>
+      <button id="per-next" aria-label="Next period">›</button>
+    </div>
+
+    <div class="receipt stats-receipt">
+      <div class="today-label" id="stats-scope">—</div>
+      <div class="today-total"><sup>$</sup><span id="stats-total">0.00</span></div>
+      <div class="today-meta">
+        <span id="stats-vs">—</span>
+        <span id="stats-count">0 charges</span>
+      </div>
+    </div>
+
+    <div class="stat-row">
+      <div class="stat" id="stats-avg-box">
+        <div class="label" id="stats-avg-label">DAILY AVG</div>
+        <div class="val">$0</div>
+      </div>
+      <div class="stat" id="stats-max-box">
+        <div class="label">BIGGEST DAY</div>
+        <div class="val">$0</div>
+      </div>
+    </div>
+
+    <section class="panel">
+      <h2 id="stats-chart-title">Breakdown</h2>
+      <canvas id="stats-chart" height="180"></canvas>
+    </section>
+
+    <section class="panel">
+      <h2>By category</h2>
+      <div id="stats-cats"><div class="empty">Nothing logged in this period.</div></div>
+    </section>
+
+    <section class="panel">
+      <h2>Top merchants</h2>
+      <div id="stats-merchants"><div class="empty">Nothing logged in this period.</div></div>
+    </section>
+
+    <section class="panel">
+      <h2>Year over year</h2>
+      <div id="stats-yoy"><div class="empty">Needs at least two years of data.</div></div>
+    </section>
+  </div>
 
   <!-- ASK -->
   <div id="tab-ask" style="display:none;">
@@ -472,9 +599,10 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
-    ['home','history','ask'].forEach(t=>{
+    ['home','history','stats','ask'].forEach(t=>{
       document.getElementById('tab-'+t).style.display = (t===btn.dataset.tab)?'block':'none';
     });
+    if(btn.dataset.tab === 'stats') renderStats();
   });
 });
 
@@ -579,6 +707,7 @@ function render(){
         ${rows}
       </div>`;
     }).join('');
+    if(typeof renderStats === 'function' && typeof statsChart !== 'undefined') { try{ renderStats(); }catch(e){} }
     histEl.querySelectorAll('.txn-undo').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         const t2 = loadTxns();
@@ -1083,7 +1212,261 @@ document.querySelectorAll('#chat-suggest button').forEach(b=>{
   b.addEventListener('click', ()=>submitQuery(b.dataset.q));
 });
 
+
+// ============ ANALYTICS ============
+
+let statsMode = 'month';                 // 'month' | 'year'
+let statsYear = new Date().getFullYear();
+let statsMonth = new Date().getMonth();  // 0-11
+let statsChart = null;
+
+const MONTH_NAMES = ['January','February','March','April','May','June',
+                     'July','August','September','October','November','December'];
+
+function periodRange(){
+  if(statsMode === 'year'){
+    return {
+      from: toLocalISO(new Date(statsYear, 0, 1)),
+      to:   toLocalISO(new Date(statsYear, 11, 31)),
+      label: String(statsYear)
+    };
+  }
+  return {
+    from: toLocalISO(new Date(statsYear, statsMonth, 1)),
+    to:   toLocalISO(new Date(statsYear, statsMonth + 1, 0)),
+    label: MONTH_NAMES[statsMonth] + ' ' + statsYear
+  };
+}
+
+function prevPeriodRange(){
+  if(statsMode === 'year'){
+    return {
+      from: toLocalISO(new Date(statsYear-1, 0, 1)),
+      to:   toLocalISO(new Date(statsYear-1, 11, 31)),
+      label: String(statsYear-1)
+    };
+  }
+  const y = statsMonth === 0 ? statsYear - 1 : statsYear;
+  const mo = statsMonth === 0 ? 11 : statsMonth - 1;
+  return {
+    from: toLocalISO(new Date(y, mo, 1)),
+    to:   toLocalISO(new Date(y, mo + 1, 0)),
+    label: MONTH_NAMES[mo] + ' ' + y
+  };
+}
+
+function txnsIn(r){
+  return loadTxns().filter(t=>!t.refunded && t.date >= r.from && t.date <= r.to);
+}
+
+function shiftPeriod(dir){
+  if(statsMode === 'year'){
+    statsYear += dir;
+  } else {
+    statsMonth += dir;
+    if(statsMonth > 11){ statsMonth = 0; statsYear++; }
+    if(statsMonth < 0){ statsMonth = 11; statsYear--; }
+  }
+  renderStats();
+}
+
+function renderStats(){
+  const r = periodRange();
+  const prev = prevPeriodRange();
+  const pool = txnsIn(r);
+  const prevPool = txnsIn(prev);
+
+  const total = pool.reduce((s,t)=>s+t.amount, 0);
+  const prevTotal = prevPool.reduce((s,t)=>s+t.amount, 0);
+
+  document.getElementById('per-label').textContent = r.label;
+  document.getElementById('stats-scope').textContent = r.label.toUpperCase();
+  document.getElementById('stats-total').textContent = fmt(total);
+  document.getElementById('stats-count').textContent =
+    pool.length + (pool.length === 1 ? ' charge' : ' charges');
+
+  // Don't let the user walk into empty future periods
+  const now = new Date();
+  const atPresent = statsMode === 'year'
+    ? statsYear >= now.getFullYear()
+    : (statsYear > now.getFullYear() ||
+       (statsYear === now.getFullYear() && statsMonth >= now.getMonth()));
+  document.getElementById('per-next').disabled = atPresent;
+
+  // vs previous period
+  const vsEl = document.getElementById('stats-vs');
+  if(prevTotal === 0){
+    vsEl.textContent = pool.length ? 'no data for ' + prev.label : '—';
+    vsEl.style.color = '';
+  } else {
+    const diff = total - prevTotal;
+    const pct = Math.round(Math.abs(diff) / prevTotal * 100);
+    vsEl.innerHTML = `vs ${prev.label}: <b>${diff >= 0 ? '+' : '−'}${pct}%</b>`;
+    vsEl.style.color = diff > 0 ? '#a34f3a' : '#54785f';
+  }
+
+  // averages
+  const daysElapsed = (()=>{
+    const start = new Date(r.from), end = new Date(r.to);
+    const capped = end > now ? now : end;
+    return Math.max(1, Math.round((capped - start) / 86400000) + 1);
+  })();
+
+  if(statsMode === 'year'){
+    document.getElementById('stats-avg-label').textContent = 'MONTHLY AVG';
+    const monthsElapsed = statsYear === now.getFullYear() ? now.getMonth() + 1 : 12;
+    document.querySelector('#stats-avg-box .val').textContent = '$' + fmt(total / monthsElapsed);
+  } else {
+    document.getElementById('stats-avg-label').textContent = 'DAILY AVG';
+    document.querySelector('#stats-avg-box .val').textContent = '$' + fmt(total / daysElapsed);
+  }
+
+  // biggest single day within the period
+  const byDay = {};
+  pool.forEach(t=>{ byDay[t.date] = (byDay[t.date] || 0) + t.amount; });
+  const maxDay = Object.values(byDay).length ? Math.max(...Object.values(byDay)) : 0;
+  document.querySelector('#stats-max-box .val').textContent = '$' + fmt(maxDay);
+
+  renderStatsChart(pool, r);
+  renderStatsCats(pool, total);
+  renderStatsMerchants(pool);
+  renderYoY();
+}
+
+function renderStatsChart(pool, r){
+  const title = document.getElementById('stats-chart-title');
+  let labels = [], data = [];
+
+  if(statsMode === 'year'){
+    title.textContent = 'Month by month';
+    labels = MONTH_NAMES.map(m=>m.slice(0,1));
+    data = new Array(12).fill(0);
+    pool.forEach(t=>{
+      const mo = parseInt(t.date.slice(5,7), 10) - 1;
+      data[mo] += t.amount;
+    });
+  } else {
+    title.textContent = 'Day by day';
+    const daysInMonth = new Date(statsYear, statsMonth + 1, 0).getDate();
+    data = new Array(daysInMonth).fill(0);
+    labels = Array.from({length: daysInMonth}, (_, i)=> (i+1) % 5 === 0 || i === 0 ? String(i+1) : '');
+    pool.forEach(t=>{
+      const d = parseInt(t.date.slice(8,10), 10) - 1;
+      if(d >= 0 && d < daysInMonth) data[d] += t.amount;
+    });
+  }
+
+  const ctx = document.getElementById('stats-chart');
+  if(statsChart) statsChart.destroy();
+  statsChart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ data, backgroundColor: '#3d4a8c', borderRadius: 2, maxBarThickness: 26 }] },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: items=>{
+              const i = items[0].dataIndex;
+              return statsMode === 'year'
+                ? MONTH_NAMES[i] + ' ' + statsYear
+                : MONTH_NAMES[statsMonth] + ' ' + (i+1);
+            },
+            label: c=>'$' + fmt(c.raw)
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { color:'#8b8fa8', font:{family:'IBM Plex Mono', size:10}, autoSkip:false } },
+        y: { grid: { color:'#2a2d3d' }, ticks: { color:'#8b8fa8', font:{family:'IBM Plex Mono', size:10}, callback:v=>'$'+v } }
+      }
+    }
+  });
+}
+
+function renderStatsCats(pool, total){
+  const el = document.getElementById('stats-cats');
+  if(pool.length === 0){
+    el.innerHTML = '<div class="empty">Nothing logged in this period.</div>';
+    return;
+  }
+  const by = {};
+  pool.forEach(t=>{ by[t.category] = (by[t.category] || 0) + t.amount; });
+  const sorted = Object.entries(by).sort((a,b)=>b[1]-a[1]);
+  const max = sorted[0][1];
+  el.innerHTML = sorted.map(([cat, amt])=>`
+    <div style="margin-bottom:11px;">
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:4px;">
+        <span>${cat}</span>
+        <span>$${fmt(amt)} · ${Math.round(amt/total*100)}%</span>
+      </div>
+      <div style="background:#2a2d3d;height:6px;border-radius:3px;overflow:hidden;">
+        <div style="width:${(amt/max*100).toFixed(0)}%;background:#3d4a8c;height:100%;"></div>
+      </div>
+    </div>`).join('');
+}
+
+function renderStatsMerchants(pool){
+  const el = document.getElementById('stats-merchants');
+  if(pool.length === 0){
+    el.innerHTML = '<div class="empty">Nothing logged in this period.</div>';
+    return;
+  }
+  const by = {};
+  pool.forEach(t=>{
+    const key = t.merchant.toLowerCase();
+    if(!by[key]) by[key] = { name: t.merchant, total: 0, n: 0 };
+    by[key].total += t.amount;
+    by[key].n++;
+  });
+  const sorted = Object.values(by).sort((a,b)=>b.total-a.total).slice(0, 8);
+  el.innerHTML = sorted.map(m=>`
+    <div class="rank-row">
+      <span class="r-name">${escapeHtml(m.name)}<span class="r-sub">${m.n} ${m.n===1?'visit':'visits'}</span></span>
+      <span>$${fmt(m.total)}</span>
+    </div>`).join('');
+}
+
+function renderYoY(){
+  const el = document.getElementById('stats-yoy');
+  const all = loadTxns().filter(t=>!t.refunded);
+  const byYear = {};
+  all.forEach(t=>{
+    const y = t.date.slice(0,4);
+    byYear[y] = (byYear[y] || 0) + t.amount;
+  });
+  const years = Object.keys(byYear).sort();
+  if(years.length < 2){
+    el.innerHTML = '<div class="empty">Needs at least two years of data. Keep logging and this fills in.</div>';
+    return;
+  }
+  el.innerHTML = years.map((y, i)=>{
+    let delta = '';
+    if(i > 0){
+      const prev = byYear[years[i-1]];
+      const d = byYear[y] - prev;
+      const pct = prev ? Math.round(Math.abs(d)/prev*100) : 0;
+      delta = `<span class="yoy-delta ${d>=0?'up':'down'}">${d>=0?'▲':'▼'} ${pct}%</span>`;
+    }
+    return `<div class="yoy-row"><span>${y}</span><span>$${fmt(byYear[y])} ${delta}</span></div>`;
+  }).join('');
+}
+
+// ---- controls ----
+document.querySelectorAll('.ps-btn').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    document.querySelectorAll('.ps-btn').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    statsMode = b.dataset.mode;
+    renderStats();
+  });
+});
+document.getElementById('per-prev').addEventListener('click', ()=>shiftPeriod(-1));
+document.getElementById('per-next').addEventListener('click', ()=>shiftPeriod(1));
+
 render();
+renderStats();
 </script>
 </body>
 </html>
