@@ -22,12 +22,13 @@
     --radius:2px;
   }
   *{box-sizing:border-box;}
+  html{background:var(--ink);}
   html,body{margin:0;padding:0;}
   body{
     background:var(--ink);
     font-family:'IBM Plex Mono',monospace;
     color:var(--paper);
-    min-height:100vh;
+    min-height:100%;
     -webkit-font-smoothing:antialiased;
     padding-bottom:90px;
   }
@@ -92,14 +93,24 @@
     position:absolute;
     left:0; right:0;
     height:9px;
-    background:
-      linear-gradient(135deg, var(--ink) 50%, transparent 50%) top left,
-      linear-gradient(-135deg, var(--ink) 50%, transparent 50%) top right;
     background-size:14px 14px;
     background-repeat:repeat-x;
+    pointer-events:none;
   }
-  .receipt::before{ top:-1px; }
-  .receipt::after{ bottom:-1px; transform:rotate(180deg); }
+  .receipt::before{
+    top:-1px;
+    background-image:
+      linear-gradient(135deg, var(--ink) 50%, transparent 50%),
+      linear-gradient(-135deg, var(--ink) 50%, transparent 50%);
+    background-position:top left, top right;
+  }
+  .receipt::after{
+    bottom:-1px;
+    background-image:
+      linear-gradient(45deg, var(--ink) 50%, transparent 50%),
+      linear-gradient(-45deg, var(--ink) 50%, transparent 50%);
+    background-position:bottom left, bottom right;
+  }
 
   .today-label{
     font-size:11px;
@@ -206,6 +217,11 @@
     box-shadow:0 10px 26px -8px rgba(182,134,63,0.55);
     cursor:pointer;
     z-index:20;
+    -webkit-transform:translateX(-50%) translateZ(0);
+    transform:translateX(-50%) translateZ(0);
+    will-change:transform;
+    -webkit-backface-visibility:hidden;
+    backface-visibility:hidden;
   }
 
   .sheet-overlay{
@@ -217,6 +233,7 @@
   }
   .sheet-overlay.open{display:flex;}
   .sheet{
+    -webkit-overflow-scrolling:touch;
     background:var(--paper);
     color:var(--ink);
     width:100%;
@@ -256,7 +273,14 @@
     grid-template-columns:1fr 88px 20px;
     gap:8px;
     align-items:center;
-    margin-bottom:8px;
+    margin-bottom:14px;
+    padding-bottom:12px;
+    border-bottom:1px dashed var(--line);
+  }
+  .review-row .r-date{
+    grid-column:1 / -1;
+    color:var(--text-soft);
+    font-size:12px;
   }
   .review-row input, .review-row select{
     font-family:'IBM Plex Mono',monospace;
@@ -317,7 +341,11 @@
     display:flex;align-items:center;justify-content:center;
   }
   .toast{
-    position:fixed; bottom:96px; left:50%; transform:translateX(-50%);
+    position:fixed; bottom:96px; left:50%;
+    -webkit-transform:translateX(-50%) translateZ(0);
+    transform:translateX(-50%) translateZ(0);
+    -webkit-backface-visibility:hidden;
+    backface-visibility:hidden;
     background:var(--moss); color:#fff; padding:10px 18px;
     border-radius:20px; font-size:12.5px; z-index:60;
     opacity:0; pointer-events:none; transition:opacity .25s;
@@ -429,9 +457,9 @@
 
     <label class="upload-box" id="upload-box">
       <div class="icon">📸</div>
-      <div>Tap to choose a screenshot</div>
-      <span>Reads merchant + amount automatically</span>
-      <input type="file" id="file-input" accept="image/*" capture="environment">
+      <div>Choose a screenshot from your photos</div>
+      <span>Reads merchant, amount, and the Today / Yesterday / date headers</span>
+      <input type="file" id="file-input" accept="image/*">
     </label>
 
     <div class="progress" id="progress">Reading screenshot… <span id="progress-pct">0%</span></div>
@@ -460,7 +488,11 @@ const CATS = ['Food','Shopping','Transport','Bills','Entertainment','Other'];
 
 function loadTxns(){ try{ return JSON.parse(localStorage.getItem(STORE_KEY)) || []; }catch(e){ return []; } }
 function saveTxns(t){ localStorage.setItem(STORE_KEY, JSON.stringify(t)); }
-function todayStr(){ return new Date().toISOString().slice(0,10); }
+function todayStr(){
+  const d = new Date();
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off*60000).toISOString().slice(0,10);
+}
 function fmt(n){ return n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function dayLabel(dateStr){
   const d = new Date(dateStr+'T00:00:00');
@@ -494,7 +526,7 @@ function render(){
 
   // yesterday comparison
   const yest = new Date(); yest.setDate(yest.getDate()-1);
-  const yestStr = yest.toISOString().slice(0,10);
+  const yestStr = toLocalISO(yest);
   const yestTotal = txns.filter(t=>t.date===yestStr).reduce((s,t)=>s+t.amount,0);
   const vsEl = document.getElementById('vs-yesterday');
   if(yestTotal===0 && todayTotal===0){ vsEl.textContent='—'; }
@@ -509,7 +541,7 @@ function render(){
   const days = [];
   for(let i=6;i>=0;i--){
     const d = new Date(); d.setDate(d.getDate()-i);
-    const ds = d.toISOString().slice(0,10);
+    const ds = toLocalISO(d);
     const total = txns.filter(t=>t.date===ds).reduce((s,t)=>s+t.amount,0);
     days.push({date:ds, total});
   }
@@ -639,7 +671,7 @@ fileInput.addEventListener('change', async (e)=>{
     if(parsed.length===0){
       addReviewRow('', '');
     } else {
-      parsed.forEach(p=>addReviewRow(p.merchant, p.amount));
+      parsed.forEach(p=>addReviewRow(p.merchant, p.amount, p.date));
     }
   }catch(err){
     progress.classList.remove('on');
@@ -649,40 +681,118 @@ fileInput.addEventListener('change', async (e)=>{
   }
 });
 
+const MONTHS = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,sept:8,oct:9,nov:10,dec:11};
+
+function offsetDate(days){
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return toLocalISO(d);
+}
+
+// Detects Apple Pay section headers: "Today", "Yesterday", "Aug 28", "August 28, 2026", "8/28/26"
+function detectDateHeader(line){
+  const l = line.toLowerCase().trim();
+
+  if(/^today\b/.test(l)) return todayStr();
+  if(/^yesterday\b/.test(l)) return offsetDate(1);
+
+  // Weekday names — Apple Pay uses these for the last week ("Monday", "Saturday")
+  const weekdays = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+  const wdMatch = weekdays.findIndex(w=>new RegExp('^'+w+'\\b').test(l));
+  if(wdMatch !== -1){
+    // find the most recent past date matching that weekday
+    for(let i=1;i<=7;i++){
+      const d = new Date();
+      d.setDate(d.getDate()-i);
+      if(d.getDay()===wdMatch) return toLocalISO(d);
+    }
+  }
+
+  // "Aug 28" / "August 28, 2026" / "28 Aug"
+  let m = l.match(/\b([a-z]{3,9})\.?\s+(\d{1,2})(?:,?\s*(\d{4}))?\b/);
+  if(m && MONTHS[m[1].slice(0,4)] !== undefined || (m && MONTHS[m[1].slice(0,3)] !== undefined)){
+    const key = MONTHS[m[1].slice(0,4)] !== undefined ? m[1].slice(0,4) : m[1].slice(0,3);
+    const mon = MONTHS[key];
+    if(mon !== undefined){
+      const day = parseInt(m[2],10);
+      let year = m[3] ? parseInt(m[3],10) : new Date().getFullYear();
+      let d = new Date(year, mon, day);
+      // if no year given and the date lands in the future, it's from last year
+      if(!m[3] && d > new Date()) d = new Date(year-1, mon, day);
+      if(!isNaN(d)) return toLocalISO(d);
+    }
+  }
+
+  // "8/28/26" or "8/28/2026" or "28.8.26"
+  m = l.match(/\b(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{2,4})\b/);
+  if(m){
+    let year = parseInt(m[3],10);
+    if(year < 100) year += 2000;
+    const d = new Date(year, parseInt(m[1],10)-1, parseInt(m[2],10));
+    if(!isNaN(d)) return toLocalISO(d);
+  }
+
+  return null;
+}
+
+function toLocalISO(d){
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off*60000).toISOString().slice(0,10);
+}
+
 function parseReceiptText(text){
   const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
   const results = [];
-  const amountRe = /\$?\s?(\d{1,4}(?:,\d{3})*\.\d{2})/;
+  const amountRe = /\$\s?(\d{1,4}(?:,\d{3})*\.\d{2})|(?:^|\s)(\d{1,4}(?:,\d{3})*\.\d{2})(?:\s|$)/;
+
+  // Default bucket is today; changes as we hit date headers scanning down the screenshot
+  let currentDate = todayStr();
+
   lines.forEach(line=>{
+    // Is this line a date header? If so, switch the bucket and don't treat it as a txn.
+    const header = detectDateHeader(line);
+    const hasAmount = amountRe.test(line);
+    if(header && !hasAmount){
+      currentDate = header;
+      return;
+    }
+
     const m = line.match(amountRe);
     if(m){
-      let merchant = line.replace(amountRe,'').replace(/[|•·—\-]+$/,'').trim();
+      const rawAmt = m[1] || m[2];
+      if(!rawAmt) return;
+      let merchant = line.replace(m[0],'').replace(/[|•·—\-]+$/,'').trim();
       merchant = merchant.replace(/^\W+|\W+$/g,'').trim();
-      if(!merchant) merchant = 'Unknown merchant';
-      const amount = m[1].replace(/,/g,'');
-      // filter out obviously-wrong huge/tiny OCR noise amounts
-      const val = parseFloat(amount);
-      if(val>0 && val<5000){
-        results.push({merchant, amount});
+
+      // Strip trailing status words Apple Pay appends
+      merchant = merchant.replace(/\b(pending|approved|declined|authorization|transaction)\b/gi,'').trim();
+
+      if(!merchant || merchant.length < 2) merchant = 'Unknown merchant';
+
+      const val = parseFloat(rawAmt.replace(/,/g,''));
+      if(val>0 && val<20000){
+        results.push({merchant, amount: rawAmt.replace(/,/g,''), date: currentDate});
       }
     }
   });
-  // de-dupe identical merchant+amount lines OCR sometimes doubles
+
+  // de-dupe identical merchant+amount+date lines OCR sometimes doubles
   const seen = new Set();
   return results.filter(r=>{
-    const key = r.merchant+'|'+r.amount;
+    const key = r.merchant+'|'+r.amount+'|'+r.date;
     if(seen.has(key)) return false;
     seen.add(key); return true;
   });
 }
 
-function addReviewRow(merchant, amount){
+function addReviewRow(merchant, amount, date){
   const row = document.createElement('div');
   row.className = 'review-row';
   row.innerHTML = `
     <input type="text" placeholder="Merchant" value="${escapeHtml(merchant)}" class="r-merchant">
-    <input type="text" inputmode="decimal" placeholder="0.00" value="${amount}" class="r-amount">
+    <input type="text" inputmode="decimal" placeholder="0.00" value="${amount || ''}" class="r-amount">
     <button class="rm">×</button>
+    <input type="date" value="${date || todayStr()}" class="r-date">
   `;
   row.querySelector('.rm').addEventListener('click', ()=>row.remove());
   reviewRows.appendChild(row);
@@ -702,11 +812,11 @@ document.getElementById('manual-toggle').addEventListener('click', ()=>{
 document.getElementById('save-add').addEventListener('click', ()=>{
   const rows = reviewRows.querySelectorAll('.review-row');
   const txns = loadTxns();
-  const date = todayStr();
   let count = 0;
   rows.forEach(row=>{
     const merchant = row.querySelector('.r-merchant').value.trim();
     const amount = parseFloat(row.querySelector('.r-amount').value);
+    const date = row.querySelector('.r-date').value || todayStr();
     if(merchant && !isNaN(amount) && amount>0){
       txns.push({
         id: Date.now()+'-'+Math.random().toString(36).slice(2,7),
